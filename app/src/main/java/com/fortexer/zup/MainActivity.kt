@@ -26,6 +26,27 @@ class MainActivity : Activity() {
         hideSystemUi()
     }
 
+    override fun onResume() {
+        super.onResume()
+        gameView.onHostResume()
+        hideSystemUi()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        gameView.onHostPause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        gameView.release()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (!gameView.handleBack()) super.onBackPressed()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUi()
