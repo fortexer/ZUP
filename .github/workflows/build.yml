@@ -203,13 +203,22 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      
       - name: Install and launch on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           arch: x86_64
           script: |
+            set -e
+
+            echo "Installing ZUP..."
             adb install ZUP-release.apk
-            adb shell pm list packages | grep com.fortexer.zup
-            adb shell monkey -p com.fortexer.zup \
-              -c android.intent.category.LAUNCHER 1
+
+            echo "Checking package..."
+            adb shell pm list packages | grep -F "com.fortexer.zup"
+
+            echo "Launching ZUP..."
+            adb shell monkey -p com.fortexer.zup 1
+
+            echo "ZUP launch command completed."
