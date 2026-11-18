@@ -26,6 +26,11 @@ class Store(context: Context) {
     var fxHigh = true
         private set
 
+    var gamesPlayed = 0
+        private set
+    var totalCrystals = 0
+        private set
+
     private val ownedSkins = HashSet<Int>()
     private val ownedTrails = HashSet<Int>()
 
@@ -58,6 +63,25 @@ class Store(context: Context) {
         music = p.getBoolean("music", true)
         vibration = p.getBoolean("vibration", true)
         fxHigh = p.getBoolean("fxHigh", true)
+        gamesPlayed = max(0, p.getInt("gamesPlayed", 0))
+        totalCrystals = max(0, p.getInt("totalCrystals", 0))
+    }
+
+    fun ownedSkinCount() = ownedSkins.size
+    fun ownedTrailCount() = ownedTrails.size
+
+    /** Called once per finished run. */
+    fun recordRun(crystals: Int) {
+        gamesPlayed = min(999_999, gamesPlayed + 1)
+        totalCrystals = min(9_999_999, totalCrystals + max(0, crystals))
+        p.edit().putInt("gamesPlayed", gamesPlayed).putInt("totalCrystals", totalCrystals).apply()
+    }
+
+    /** Restores only the settings (sound, music, vibration, effects) — coins, records and skins stay. */
+    fun resetSettings() {
+        sound = true; music = true; vibration = true; fxHigh = true
+        p.edit().putBoolean("sound", true).putBoolean("music", true)
+            .putBoolean("vibration", true).putBoolean("fxHigh", true).apply()
     }
 
     fun setBest(v: Int) {

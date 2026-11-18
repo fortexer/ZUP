@@ -22,6 +22,7 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         gameView = GameView(this)
+        gameView.onExit = { finish() }
         setContentView(gameView)
         hideSystemUi()
     }

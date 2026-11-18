@@ -23,3 +23,8 @@ It refuses to run unless all four secrets exist. Nothing secret is in the reposi
 
 Every future update MUST use this same keystore. If it is lost, Myket will not accept updates to the app.
 Never generate a new key per build.
+
+## Outputs of the release job
+- `ZUP-release-apk` → `ZUP-release.apk` (signed, verified with apksigner)
+- `ZUP-release-aab` → `ZUP-release.aab` (signed with the same keystore)
+

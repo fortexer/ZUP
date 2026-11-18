@@ -26,7 +26,7 @@ import kotlin.random.Random
  */
 class GameView(context: Context) : View(context) {
 
-    private enum class Screen { MENU, PLAYING, PAUSED, OVER, SHOP, SETTINGS }
+    private enum class Screen { MENU, PLAYING, PAUSED, OVER, SHOP, SETTINGS, GUIDE, RECORDS }
 
     companion object {
         const val B_PLAY = 1
@@ -38,6 +38,9 @@ class GameView(context: Context) : View(context) {
         const val B_RESTART = 7
         const val B_HOME = 8
         const val B_RETRY = 9
+        const val B_GUIDE = 10
+        const val B_RECORDS = 11
+        const val B_EXIT = 13
         const val B_TAB_SKINS = 20
         const val B_TAB_TRAILS = 21
         const val B_SOUND = 30
@@ -45,6 +48,8 @@ class GameView(context: Context) : View(context) {
         const val B_VIB = 32
         const val B_FX = 33
         const val B_RESET = 34
+        const val B_RESET_SET = 35
+        const val B_MYKET_COMMENT = 50
         const val B_CANCEL = 40
         const val B_ERASE = 41
         const val B_SKIN = 1000
@@ -180,6 +185,24 @@ class GameView(context: Context) : View(context) {
     private val boldFace: Typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     private val normalFace: Typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
 
+    // Persian faces: an optional Vazirmatn drop-in is preferred, otherwise the bundled DejaVu Sans
+    // (full Persian letters + joining); last resort is the system default.
+    private val faRegular: Typeface = loadFont(arrayOf("fonts/Vazirmatn-Regular.ttf", "fonts/DejaVuSans.ttf"), false)
+    private val faBold: Typeface = loadFont(arrayOf("fonts/Vazirmatn-Bold.ttf", "fonts/DejaVuSans-Bold.ttf"), true)
+
+    private fun loadFont(candidates: Array<String>, bold: Boolean): Typeface {
+        for (path in candidates) {
+            try {
+                return Typeface.createFromAsset(context.assets, path)
+            } catch (e: Throwable) {
+            }
+        }
+        return Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL)
+    }
+
+    /** Called when the player taps "exit" in the main menu. */
+    var onExit: (() -> Unit)? = null
+
     init {
         audio.soundOn = store.sound
         audio.musicOn = store.music
@@ -232,7 +255,7 @@ class GameView(context: Context) : View(context) {
             Screen.PAUSED -> { resumeGame(); true }
             Screen.OVER -> { goHome(); true }
             Screen.SHOP -> { gotoScreen(if (shopFrom == Screen.OVER) Screen.OVER else Screen.MENU); true }
-            Screen.SETTINGS -> { gotoScreen(Screen.MENU); true }
+            Screen.SETTINGS, Screen.GUIDE, Screen.RECORDS -> { gotoScreen(Screen.MENU); true }
             Screen.MENU -> false
         }
     }
@@ -301,6 +324,7 @@ class GameView(context: Context) : View(context) {
         bonusCoins = score / 20
         recordCoins = if (newBest && score >= 10) 25 else 0
         if (newBest) store.setBest(score)
+        store.recordRun(crystalCount)
         store.addCoins(bonusCoins + recordCoins)
         gotoScreen(Screen.OVER)
         shake = 0.45f
@@ -426,6 +450,16 @@ class GameView(context: Context) : View(context) {
                     gotoScreen(Screen.SHOP)
                 }
                 B_SETTINGS -> gotoScreen(Screen.SETTINGS)
+                B_GUIDE -> gotoScreen(Screen.GUIDE)
+                B_RECORDS -> gotoScreen(Screen.RECORDS)
+                B_EXIT -> onExit?.invoke()
+                B_MYKET_COMMENT -> myketResult(Myket.openComment(context))
+                B_RESET_SET -> {
+                    store.resetSettings()
+                    audio.soundOn = store.sound
+                    audio.setMusic(store.music)
+                    showToast(Fa.SETTINGS_RESET)
+                }
                 B_BACK -> handleBack()
                 B_PAUSE -> pauseGame()
                 B_RESUME -> resumeGame()
@@ -459,9 +493,17 @@ class GameView(context: Context) : View(context) {
                     swAnim[1] = 1f
                     swAnim[2] = 1f
                     confirmReset = false
-                    showToast("Game data erased")
+                    showToast(Fa.ERASED)
                 }
             }
+        }
+    }
+
+    private fun myketResult(r: Myket.Result) {
+        when (r) {
+            Myket.Result.OK -> {}
+            Myket.Result.NOT_INSTALLED -> { audio.play("error"); showToast(Fa.MYKET_MISSING) }
+            Myket.Result.FAILED -> { audio.play("error"); showToast(Fa.MYKET_FAILED) }
         }
     }
 
@@ -470,10 +512,10 @@ class GameView(context: Context) : View(context) {
             if (store.buySkin(i)) {
                 audio.play("buy")
                 buzz(25)
-                showToast("Purchased ${Cosmetics.skinNames[i]}")
+                showToast("«${Cosmetics.skinNames[i]}» خریداری شد")
             } else {
                 audio.play("error")
-                showToast("Not enough coins")
+                showToast(Fa.NOT_ENOUGH)
             }
         } else if (store.skin == i) {
             if (i != 0) store.equipSkin(0)
@@ -489,10 +531,10 @@ class GameView(context: Context) : View(context) {
             if (store.buyTrail(i)) {
                 audio.play("buy")
                 buzz(25)
-                showToast("Purchased ${Cosmetics.trailNames[i]}")
+                showToast("«${Cosmetics.trailNames[i]}» خریداری شد")
             } else {
                 audio.play("error")
-                showToast("Not enough coins")
+                showToast(Fa.NOT_ENOUGH)
             }
         } else if (store.trail == i) {
             if (i != 0) store.equipTrail(0)
@@ -780,20 +822,51 @@ class GameView(context: Context) : View(context) {
 
     private fun stag(i: Int): Float = ease((screenTime - i * 0.07f) / 0.4f)
 
+    /**
+     * Prepares [textPaint] (font, size, spacing) for [s] and returns the string to draw:
+     * ASCII digits become Persian digits; Persian text gets the Persian font, no letter spacing
+     * (spacing would break the letter joining) and a leading RLM so the base direction is RTL.
+     */
+    private fun prep(s: String, size: Float, bold: Boolean, spacing: Float): String {
+        var t = Fa.d(s)
+        val arabic = Fa.hasArabic(t)
+        if (Fa.hasLetters(t)) t = "\u200F" + t
+        textPaint.textSize = size
+        textPaint.typeface = if (arabic) (if (bold) faBold else faRegular) else (if (bold) boldFace else normalFace)
+        textPaint.letterSpacing = if (arabic) 0f else spacing
+        return t
+    }
+
     private fun label(
         c: Canvas, s: String, x: Float, y: Float, size: Float, color: Int,
         bold: Boolean = true, align: Paint.Align = Paint.Align.CENTER, spacing: Float = 0f, maxW: Float = 0f
     ) {
-        textPaint.textSize = size
-        textPaint.typeface = if (bold) boldFace else normalFace
-        textPaint.letterSpacing = spacing
+        val t = prep(s, size, bold, spacing)
         if (maxW > 0f) {
-            val mw = textPaint.measureText(s)
+            val mw = textPaint.measureText(t)
             if (mw > maxW) textPaint.textSize = size * maxW / mw
         }
         textPaint.color = color
         textPaint.textAlign = align
-        c.drawText(s, x, y, textPaint)
+        c.drawText(t, x, y, textPaint)
+    }
+
+    /** Greedy word wrap for right-to-left paragraphs. */
+    private fun wrapLines(s: String, size: Float, maxW: Float, bold: Boolean = false): List<String> {
+        prep(s, size, bold, 0f)
+        val lines = ArrayList<String>()
+        var cur = ""
+        for (word in Fa.d(s).split(' ')) {
+            val trial = if (cur.isEmpty()) word else "$cur $word"
+            if (cur.isNotEmpty() && textPaint.measureText("\u200F" + trial) > maxW) {
+                lines.add(cur)
+                cur = word
+            } else {
+                cur = trial
+            }
+        }
+        if (cur.isNotEmpty()) lines.add(cur)
+        return lines
     }
 
     private fun drawCard(c: Canvas, l: Float, t: Float, r: Float, b: Float, accent: Int, accentA: Float) {
@@ -806,7 +879,7 @@ class GameView(context: Context) : View(context) {
         c.drawRoundRect(rect, rad, rad, stroke)
     }
 
-    /** style 0 = primary (cyan), 1 = secondary, 2 = danger */
+    /** style 0 = primary (cyan), 1 = secondary, 2 = danger. Persian text puts the icon on the right. */
     private fun uiButton(
         c: Canvas, id: Int, l: Float, t: Float, r: Float, b: Float,
         style: Int, text: String?, icon: Int, enabled: Boolean = true
@@ -840,40 +913,61 @@ class GameView(context: Context) : View(context) {
         stroke.color = withAlpha(base, (if (style == 1) 0.55f else 0.95f) * dim)
         c.drawRoundRect(rect, rad, rad, stroke)
 
-        val ts = (b - t) * 0.36f
-        val isz = (b - t) * 0.46f
+        var ts = (b - t) * 0.36f
+        var isz = (b - t) * 0.46f
         val col = withAlpha(white, dim)
         if (text != null) {
-            textPaint.textSize = ts
-            textPaint.typeface = boldFace
-            textPaint.letterSpacing = 0.05f
-            val tw = textPaint.measureText(text)
-            val gap = ts * 0.5f
-            val total = if (icon >= 0) isz + gap + tw else tw
+            var str = prep(text, ts, true, 0.05f)
+            var tw = textPaint.measureText(str)
+            var gap = ts * 0.5f
+            var total = if (icon >= 0) isz + gap + tw else tw
+            val avail = (r - l) * 0.9f
+            if (total > avail) {
+                val k = avail / total
+                ts *= k
+                isz *= k
+                str = prep(text, ts, true, 0.05f)
+                tw = textPaint.measureText(str)
+                gap = ts * 0.5f
+                total = if (icon >= 0) isz + gap + tw else tw
+            }
+            val rtl = Fa.hasArabic(str)
             var x = cx - total / 2f
-            if (icon >= 0) {
+            if (icon >= 0 && !rtl) {
                 Icons.draw(c, icon, x + isz / 2f, cy, isz, col)
                 x += isz + gap
             }
-            label(c, text, x, cy + ts * 0.35f, ts, col, align = Paint.Align.LEFT, spacing = 0.05f)
+            textPaint.color = col
+            textPaint.textAlign = Paint.Align.LEFT
+            c.drawText(str, x, cy + ts * 0.35f, textPaint)
+            if (icon >= 0 && rtl) {
+                Icons.draw(c, icon, x + tw + gap + isz / 2f, cy, isz, col)
+            }
         } else if (icon >= 0) {
-            Icons.draw(c, icon, cx, cy, isz * 1.15f, col)
+            if (icon == Icons.BACK) {
+                // RTL layout: the "back" arrow points to the right
+                c.save()
+                c.scale(-1f, 1f, cx, cy)
+                Icons.draw(c, icon, cx, cy, isz * 1.15f, col)
+                c.restore()
+            } else {
+                Icons.draw(c, icon, cx, cy, isz * 1.15f, col)
+            }
         }
         c.restore()
     }
 
-    private fun drawCoinChip(c: Canvas, rightX: Float, top: Float, hgt: Float, value: Int, prefix: String) {
-        val txt = prefix + value
+    /** Coin chip anchored by its right edge, or by its left edge when [leftX] >= 0. */
+    private fun drawCoinChip(c: Canvas, rightX: Float, top: Float, hgt: Float, value: Int, prefix: String, leftX: Float = -1f) {
         val ts = hgt * 0.55f
-        textPaint.textSize = ts
-        textPaint.typeface = boldFace
-        textPaint.letterSpacing = 0f
+        val txt = prep(prefix + value, ts, true, 0f)
         val tw = textPaint.measureText(txt)
         val pad = hgt * 0.35f
         val isz = hgt * 0.62f
         val chipW = pad + isz + pad * 0.6f + tw + pad
-        val l = rightX - chipW
-        rect.set(l, top, rightX, top + hgt)
+        val l = if (leftX >= 0f) leftX else rightX - chipW
+        val r = l + chipW
+        rect.set(l, top, r, top + hgt)
         fill.color = withAlpha(white, 0.07f)
         c.drawRoundRect(rect, hgt / 2f, hgt / 2f, fill)
         stroke.strokeWidth = 0.4f * ui
@@ -894,7 +988,7 @@ class GameView(context: Context) : View(context) {
         drawGrid(c)
         btnCount = 0
         ga = 1f
-        if (screen != Screen.SHOP && screen != Screen.SETTINGS) drawWorld(c)
+        if (screen == Screen.MENU || screen == Screen.PLAYING || screen == Screen.PAUSED || screen == Screen.OVER) drawWorld(c)
 
         when (screen) {
             Screen.MENU -> drawMenu(c)
@@ -909,6 +1003,8 @@ class GameView(context: Context) : View(context) {
             Screen.OVER -> drawGameOver(c)
             Screen.SHOP -> drawShop(c)
             Screen.SETTINGS -> drawSettings(c)
+            Screen.GUIDE -> drawGuide(c)
+            Screen.RECORDS -> drawRecords(c)
         }
         ga = 1f
         drawToast(c)
@@ -1043,7 +1139,7 @@ class GameView(context: Context) : View(context) {
     private fun drawHud(c: Canvas) {
         val top = topY()
         label(c, "$score", w / 2f, top + 17f * ui, 15f * ui, withAlpha(white, 1f))
-        label(c, "BEST ${max(store.best, score)}", w / 2f, top + 24f * ui, 3.8f * ui, withAlpha(white, 0.55f), spacing = 0.15f)
+        label(c, "${Fa.BEST} ${max(store.best, score)}", w / 2f, top + 24f * ui, 3.8f * ui, withAlpha(white, 0.55f))
         drawCoinChip(c, w - 5f * ui, top, 8f * ui, runCoins, "+")
         if (screen == Screen.PLAYING) {
             uiButton(c, B_PAUSE, 5f * ui, top, 13f * ui, top + 8f * ui, 1, null, Icons.PAUSE)
@@ -1055,7 +1151,7 @@ class GameView(context: Context) : View(context) {
         }
         if (screen == Screen.PLAYING && score == 0 && playTime < 4f && countdown <= 0f) {
             val k = 0.5f + 0.5f * sin(clock * 5f)
-            label(c, "TAP TO FLIP", w / 2f, ballY + 14f * u, 4.2f * ui, withAlpha(white, 0.35f + 0.45f * k), spacing = 0.2f)
+            label(c, Fa.TAP_TO_FLIP, w / 2f, ballY + 14f * u, 4.2f * ui, withAlpha(white, 0.35f + 0.45f * k), maxW = 90f * ui)
         }
     }
 
@@ -1085,25 +1181,34 @@ class GameView(context: Context) : View(context) {
         c.drawLine(w * 0.32f, ty + 19f * ui, w * 0.68f, ty + 19f * ui, stroke)
 
         ga = stag(1)
-        label(c, "Flip direction. Dodge barriers.", w / 2f, ty + 27f * ui, 3.8f * ui, withAlpha(white, 0.7f), bold = false, maxW = 88f * ui)
-        label(c, "Collect crystals. Beat your record.", w / 2f, ty + 32.5f * ui, 3.8f * ui, withAlpha(white, 0.7f), bold = false, maxW = 88f * ui)
-        label(c, "با لمس صفحه جهت توپ را عوض کن، از موانع فرار کن و کریستال بگیر", w / 2f, ty + 38.5f * ui, 3.4f * ui, withAlpha(softViolet, 0.85f), bold = false, maxW = 88f * ui)
+        val tagLines = wrapLines(Fa.TAGLINE, 3.8f * ui, 84f * ui)
+        for ((i, ln) in tagLines.withIndex()) {
+            label(c, ln, w / 2f, ty + 27f * ui + i * 5.2f * ui, 3.8f * ui, withAlpha(white, 0.75f), bold = false, maxW = 88f * ui)
+        }
 
         ga = stag(2)
-        val cardT = ty + 44f * ui + (1f - ga) * 5f * ui
+        val cardT = ty + 38f * ui + (1f - ga) * 5f * ui
         drawCard(c, w / 2f - 32f * ui, cardT, w / 2f + 32f * ui, cardT + 12f * ui, gold, 0.35f)
-        Icons.draw(c, Icons.TROPHY, w / 2f - 24f * ui, cardT + 6f * ui, 6f * ui, withAlpha(gold, 1f))
-        label(c, "BEST SCORE", w / 2f - 17f * ui, cardT + 7.4f * ui, 3.6f * ui, withAlpha(white, 0.6f), align = Paint.Align.LEFT, spacing = 0.12f)
-        label(c, "${store.best}", w / 2f + 29f * ui, cardT + 8.2f * ui, 7f * ui, withAlpha(white, 1f), align = Paint.Align.RIGHT)
+        Icons.draw(c, Icons.TROPHY, w / 2f + 25f * ui, cardT + 6f * ui, 6f * ui, withAlpha(gold, 1f))
+        label(c, Fa.BEST_SCORE, w / 2f + 18f * ui, cardT + 7.4f * ui, 3.9f * ui, withAlpha(white, 0.7f), align = Paint.Align.RIGHT, maxW = 30f * ui)
+        label(c, "${store.best}", w / 2f - 29f * ui, cardT + 8.2f * ui, 7f * ui, withAlpha(white, 1f), align = Paint.Align.LEFT)
 
         ga = stag(3)
-        val pt = ty + 60f * ui + (1f - ga) * 5f * ui
-        uiButton(c, B_PLAY, w / 2f - 33f * ui, pt, w / 2f + 33f * ui, pt + 15f * ui, 0, "PLAY", Icons.PLAY)
+        val pt = ty + 54f * ui + (1f - ga) * 5f * ui
+        uiButton(c, B_PLAY, w / 2f - 33f * ui, pt, w / 2f + 33f * ui, pt + 15f * ui, 0, Fa.PLAY, Icons.PLAY)
 
+        // Two columns, right-to-left: the first item of each pair sits on the right.
         ga = stag(4)
-        val st = ty + 79f * ui + (1f - ga) * 5f * ui
-        uiButton(c, B_SHOP, w / 2f - 33f * ui, st, w / 2f - 2f * ui, st + 12f * ui, 1, "SHOP", Icons.SHOP)
-        uiButton(c, B_SETTINGS, w / 2f + 2f * ui, st, w / 2f + 33f * ui, st + 12f * ui, 1, "SETTINGS", Icons.SETTINGS)
+        val r1 = ty + 73f * ui + (1f - ga) * 5f * ui
+        uiButton(c, B_SHOP, w / 2f + 2f * ui, r1, w / 2f + 33f * ui, r1 + 12f * ui, 1, Fa.SHOP, Icons.SHOP)
+        uiButton(c, B_SETTINGS, w / 2f - 33f * ui, r1, w / 2f - 2f * ui, r1 + 12f * ui, 1, Fa.SETTINGS, Icons.SETTINGS)
+        ga = stag(5)
+        val r2 = ty + 88f * ui + (1f - ga) * 5f * ui
+        uiButton(c, B_GUIDE, w / 2f + 2f * ui, r2, w / 2f + 33f * ui, r2 + 12f * ui, 1, Fa.MENU_GUIDE, Icons.HELP)
+        uiButton(c, B_RECORDS, w / 2f - 33f * ui, r2, w / 2f - 2f * ui, r2 + 12f * ui, 1, Fa.MENU_RECORDS, Icons.TROPHY)
+        ga = stag(6)
+        val r3 = ty + 103f * ui + (1f - ga) * 5f * ui
+        uiButton(c, B_EXIT, w / 2f - 33f * ui, r3, w / 2f + 33f * ui, r3 + 12f * ui, 2, Fa.EXIT, Icons.EXIT)
         ga = 1f
     }
 
@@ -1112,17 +1217,16 @@ class GameView(context: Context) : View(context) {
         val k = back(screenTime / 0.35f)
         ga = ease(screenTime / 0.25f)
         val cw = 76f * ui
-        val chh = 64f * ui
+        val chh = 62f * ui
         val l = w / 2f - cw / 2f
         val t = (h - chh) / 2f
         c.save()
         c.scale(0.9f + 0.1f * k, 0.9f + 0.1f * k, w / 2f, h / 2f)
         drawCard(c, l, t, l + cw, t + chh, violet, 0.5f)
-        label(c, "PAUSED", w / 2f, t + 15f * ui, 9f * ui, withAlpha(white, 1f), spacing = 0.1f)
-        label(c, "مکث", w / 2f, t + 22f * ui, 4.6f * ui, withAlpha(softViolet, 1f))
-        uiButton(c, B_RESUME, l + 6f * ui, t + 27f * ui, l + cw - 6f * ui, t + 40f * ui, 0, "RESUME", Icons.PLAY)
-        uiButton(c, B_RESTART, l + 6f * ui, t + 44f * ui, l + cw / 2f - 1.5f * ui, t + 56f * ui, 1, "RESTART", Icons.RESTART)
-        uiButton(c, B_HOME, l + cw / 2f + 1.5f * ui, t + 44f * ui, l + cw - 6f * ui, t + 56f * ui, 1, "HOME", Icons.HOME)
+        label(c, Fa.PAUSED, w / 2f, t + 17f * ui, 8.5f * ui, withAlpha(white, 1f), maxW = cw - 8f * ui)
+        uiButton(c, B_RESUME, l + 6f * ui, t + 25f * ui, l + cw - 6f * ui, t + 38f * ui, 0, Fa.RESUME, Icons.PLAY)
+        uiButton(c, B_RESTART, l + cw / 2f + 1.5f * ui, t + 43f * ui, l + cw - 6f * ui, t + 55f * ui, 1, Fa.RESTART, Icons.RESTART)
+        uiButton(c, B_HOME, l + 6f * ui, t + 43f * ui, l + cw / 2f - 1.5f * ui, t + 55f * ui, 1, Fa.MENU, Icons.HOME)
         c.restore()
         ga = 1f
     }
@@ -1132,60 +1236,66 @@ class GameView(context: Context) : View(context) {
         val k = back(screenTime / 0.5f)
         ga = ease(screenTime / 0.3f)
         val cw = 84f * ui
-        val chh = 114f * ui
+        val chh = 110f * ui
         val l = w / 2f - cw / 2f
         val t = (h - chh) / 2f
         c.save()
         c.scale(0.85f + 0.15f * k, 0.85f + 0.15f * k, w / 2f, h / 2f)
         drawCard(c, l, t, l + cw, t + chh, if (newBest) gold else magenta, 0.55f)
         val cx = w / 2f
-        label(c, "GAME OVER", cx + 0.6f * ui, t + 14f * ui, 11f * ui, withAlpha(cyan, 0.8f), spacing = 0.05f, maxW = cw - 8f * ui)
-        label(c, "GAME OVER", cx - 0.6f * ui, t + 14f * ui, 11f * ui, withAlpha(magenta, 0.8f), spacing = 0.05f, maxW = cw - 8f * ui)
-        label(c, "GAME OVER", cx, t + 14f * ui, 11f * ui, withAlpha(white, 1f), spacing = 0.05f, maxW = cw - 8f * ui)
-        label(c, "بازی تمام شد", cx, t + 22f * ui, 4.8f * ui, withAlpha(softViolet, 1f))
+        label(c, Fa.GAME_OVER, cx + 0.6f * ui, t + 16f * ui, 10f * ui, withAlpha(cyan, 0.8f), maxW = cw - 8f * ui)
+        label(c, Fa.GAME_OVER, cx - 0.6f * ui, t + 16f * ui, 10f * ui, withAlpha(magenta, 0.8f), maxW = cw - 8f * ui)
+        label(c, Fa.GAME_OVER, cx, t + 16f * ui, 10f * ui, withAlpha(white, 1f), maxW = cw - 8f * ui)
 
-        label(c, "SCORE", cx, t + 32f * ui, 3.6f * ui, withAlpha(white, 0.6f), spacing = 0.3f)
-        label(c, "$score", cx, t + 48f * ui, 17f * ui, withAlpha(white, 1f))
+        label(c, Fa.SCORE, cx, t + 29f * ui, 4.2f * ui, withAlpha(white, 0.6f))
+        label(c, "$score", cx, t + 46f * ui, 17f * ui, withAlpha(white, 1f))
 
         if (newBest) {
             val p = 0.7f + 0.3f * sin(clock * 6f)
-            Icons.draw(c, Icons.TROPHY, cx - 22f * ui, t + 57f * ui, 5.5f * ui, withAlpha(gold, p))
-            label(c, "NEW RECORD!", cx + 3f * ui, t + 58.5f * ui, 5.2f * ui, withAlpha(gold, p), spacing = 0.12f)
+            Icons.draw(c, Icons.TROPHY, cx + 17f * ui, t + 56f * ui, 5.5f * ui, withAlpha(gold, p))
+            label(c, Fa.NEW_RECORD, cx + 12f * ui, t + 57.5f * ui, 5.2f * ui, withAlpha(gold, p), align = Paint.Align.RIGHT, maxW = 38f * ui)
         } else {
-            label(c, "BEST ${store.best}", cx, t + 58.5f * ui, 5f * ui, withAlpha(gold, 0.9f), spacing = 0.2f)
+            label(c, "${Fa.BEST} ${store.best}", cx, t + 57.5f * ui, 5f * ui, withAlpha(gold, 0.9f), maxW = cw - 10f * ui)
         }
 
         val total = runCoins + bonusCoins + recordCoins
-        Icons.draw(c, Icons.COIN, cx - 11f * ui, t + 68f * ui, 6f * ui, withAlpha(gold, 1f), true)
-        label(c, "+$total", cx - 6f * ui, t + 70f * ui, 6.2f * ui, withAlpha(white, 1f), align = Paint.Align.LEFT)
-        label(c, "Crystals +$runCoins   Bonus +$bonusCoins   Record +$recordCoins", cx, t + 76f * ui, 3f * ui, withAlpha(white, 0.5f), bold = false, maxW = cw - 8f * ui)
+        Icons.draw(c, Icons.COIN, cx - 9f * ui, t + 67f * ui, 6f * ui, withAlpha(gold, 1f), true)
+        label(c, "+$total", cx - 4f * ui, t + 69f * ui, 6.2f * ui, withAlpha(white, 1f), align = Paint.Align.LEFT)
+        // three small columns (right to left): crystals, bonus, record
+        val colW = (cw - 8f * ui) / 3f
+        val c1 = cx + colW
+        val c3 = cx - colW
+        label(c, "${Fa.CRYSTALS}: $runCoins", c1, t + 76f * ui, 3.2f * ui, withAlpha(white, 0.55f), bold = false, maxW = colW - 1f * ui)
+        label(c, "${Fa.BONUS}: $bonusCoins", cx, t + 76f * ui, 3.2f * ui, withAlpha(white, 0.55f), bold = false, maxW = colW - 1f * ui)
+        label(c, "${Fa.BEST}: $recordCoins", c3, t + 76f * ui, 3.2f * ui, withAlpha(white, 0.55f), bold = false, maxW = colW - 1f * ui)
 
-        uiButton(c, B_RETRY, l + 9f * ui, t + 80f * ui, l + cw - 9f * ui, t + 93f * ui, 0, "RETRY", Icons.RESTART)
-        uiButton(c, B_HOME, l + 6f * ui, t + 97f * ui, l + cw / 2f - 1.5f * ui, t + 109f * ui, 1, "HOME", Icons.HOME)
-        uiButton(c, B_SHOP, l + cw / 2f + 1.5f * ui, t + 97f * ui, l + cw - 6f * ui, t + 109f * ui, 1, "SHOP", Icons.SHOP)
+        uiButton(c, B_RETRY, l + 9f * ui, t + 80f * ui, l + cw - 9f * ui, t + 93f * ui, 0, Fa.RETRY, Icons.RESTART)
+        uiButton(c, B_SHOP, l + cw / 2f + 1.5f * ui, t + 96f * ui, l + cw - 6f * ui, t + 107f * ui, 1, Fa.SHOP, Icons.SHOP)
+        uiButton(c, B_HOME, l + 6f * ui, t + 96f * ui, l + cw / 2f - 1.5f * ui, t + 107f * ui, 1, Fa.MENU, Icons.HOME)
         c.restore()
         ga = 1f
     }
 
-    private fun drawHeader(c: Canvas, title: String) {
+    /** Back button on the right (RTL), title centred. */
+    private fun drawHeader(c: Canvas, title: String, titleMaxW: Float) {
         val top = topY()
         val bh = 10f * ui
         ga = stag(0)
-        uiButton(c, B_BACK, 5f * ui, top, 5f * ui + bh, top + bh, 1, null, Icons.BACK)
-        label(c, title, w / 2f, top + bh * 0.72f, 6.5f * ui, withAlpha(white, 1f), spacing = 0.15f)
+        uiButton(c, B_BACK, w - 5f * ui - bh, top, w - 5f * ui, top + bh, 1, null, Icons.BACK)
+        label(c, title, w / 2f, top + bh * 0.72f, 6.5f * ui, withAlpha(white, 1f), maxW = titleMaxW)
     }
 
     private fun drawShop(c: Canvas) {
         val top = topY()
         val bh = 10f * ui
-        drawHeader(c, "SHOP")
-        drawCoinChip(c, w - 5f * ui, top + bh * 0.1f, bh * 0.8f, store.coins, "")
+        drawHeader(c, Fa.SHOP, w - 64f * ui)
+        drawCoinChip(c, 0f, top + bh * 0.1f, bh * 0.8f, store.coins, "", leftX = 5f * ui)
 
         ga = stag(1)
         val tabTop = top + bh + 4f * ui
         val tabH = 9f * ui
-        uiButton(c, B_TAB_SKINS, 5f * ui, tabTop, w / 2f - 1.5f * ui, tabTop + tabH, if (shopTab == 0) 0 else 1, "SKINS", -1)
-        uiButton(c, B_TAB_TRAILS, w / 2f + 1.5f * ui, tabTop, w - 5f * ui, tabTop + tabH, if (shopTab == 1) 0 else 1, "TRAILS", -1)
+        uiButton(c, B_TAB_SKINS, w / 2f + 1.5f * ui, tabTop, w - 5f * ui, tabTop + tabH, if (shopTab == 0) 0 else 1, Fa.SKINS, -1)
+        uiButton(c, B_TAB_TRAILS, 5f * ui, tabTop, w / 2f - 1.5f * ui, tabTop + tabH, if (shopTab == 1) 0 else 1, Fa.TRAILS, -1)
 
         val listTop = tabTop + tabH + 4f * ui
         listTopPx = listTop
@@ -1205,7 +1315,8 @@ class GameView(context: Context) : View(context) {
         for (i in 0 until count) {
             val col = i % 2
             val row = i / 2
-            val l = 5f * ui + col * (cardW + gap)
+            // right-to-left grid: column 0 is on the right
+            val l = 5f * ui + (1 - col) * (cardW + gap)
             val t = listTop + row * (cardH + gap) - scrollY
             if (t + cardH < listTop || t > h) continue
             drawShopCard(c, i, isSkins, l, t, l + cardW, t + cardH)
@@ -1249,12 +1360,12 @@ class GameView(context: Context) : View(context) {
             uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, if (store.coins >= price) 0 else 1, "$price", Icons.COIN)
         } else if (equipped) {
             if (i == 0) {
-                uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 1, "EQUIPPED", Icons.CHECK, false)
+                uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 1, Fa.EQUIPPED, Icons.CHECK, false)
             } else {
-                uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 1, "UNEQUIP", Icons.CHECK)
+                uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 1, Fa.UNEQUIP, Icons.CHECK)
             }
         } else {
-            uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 0, "EQUIP", -1)
+            uiButton(c, id, l + 3f * ui, bt, r - 3f * ui, bb, 0, Fa.EQUIP, -1)
         }
     }
 
@@ -1274,6 +1385,7 @@ class GameView(context: Context) : View(context) {
         c.drawCircle(kx, cy, sh * 0.36f, fill)
     }
 
+    /** One card row, right-to-left: icon and text on the right, the control/value goes on the left. */
     private fun settingRow(c: Canvas, idx: Int, y: Float, id: Int, icon: Int, text: String, interactive: Boolean) {
         ga = stag(1 + idx)
         val rh = 13f * ui
@@ -1287,18 +1399,24 @@ class GameView(context: Context) : View(context) {
             fill.color = withAlpha(white, 0.06f)
             c.drawRoundRect(rect, 4f * ui, 4f * ui, fill)
         }
-        Icons.draw(c, icon, l + 7f * ui, yy + rh / 2f, 6f * ui, withAlpha(cyan, 1f))
-        label(c, text, l + 14f * ui, yy + rh / 2f + 1.5f * ui, 4.4f * ui, withAlpha(white, 1f), align = Paint.Align.LEFT)
+        Icons.draw(c, icon, r - 7f * ui, yy + rh / 2f, 6f * ui, withAlpha(cyan, 1f))
+        label(c, text, r - 14f * ui, yy + rh / 2f + 1.5f * ui, 4.4f * ui, withAlpha(white, 1f), align = Paint.Align.RIGHT, maxW = (r - l) - 14f * ui - 34f * ui)
+    }
+
+    /** Value shown on the left side of a [settingRow]. */
+    private fun rowValue(c: Canvas, y: Float, text: String, color: Int, maxW: Float = 34f * ui) {
+        val rh = 13f * ui
+        label(c, text, 10f * ui, y + rh / 2f + 1.5f * ui, 4.4f * ui, color, align = Paint.Align.LEFT, maxW = maxW)
     }
 
     private fun drawSettings(c: Canvas) {
-        drawHeader(c, "SETTINGS")
+        drawHeader(c, Fa.SETTINGS, w - 36f * ui)
         val top = topY()
         var y = top + 10f * ui + 6f * ui
         val step = 16f * ui
         val modal = confirmReset
         val rhh = 13f * ui
-        val rightX = w - 5f * ui
+        val switchX = 5f * ui + 11f * ui
 
         val targets = floatArrayOf(
             if (store.sound) 1f else 0f,
@@ -1307,26 +1425,29 @@ class GameView(context: Context) : View(context) {
         )
         for (i in 0 until 3) swAnim[i] += (targets[i] - swAnim[i]) * min(1f, 14f * frameDt)
 
-        settingRow(c, 0, y, B_SOUND, if (store.sound) Icons.VOLUME_ON else Icons.VOLUME_OFF, "Sound", true)
-        drawSwitch(c, rightX - 11f * ui, y + rhh / 2f, swAnim[0])
+        settingRow(c, 0, y, B_SOUND, if (store.sound) Icons.VOLUME_ON else Icons.VOLUME_OFF, Fa.SOUND, true)
+        drawSwitch(c, switchX, y + rhh / 2f, swAnim[0])
         y += step
-        settingRow(c, 1, y, B_MUSIC, if (store.music) Icons.MUSIC_ON else Icons.MUSIC_OFF, "Music", true)
-        drawSwitch(c, rightX - 11f * ui, y + rhh / 2f, swAnim[1])
+        settingRow(c, 1, y, B_MUSIC, if (store.music) Icons.MUSIC_ON else Icons.MUSIC_OFF, Fa.MUSIC, true)
+        drawSwitch(c, switchX, y + rhh / 2f, swAnim[1])
         y += step
-        settingRow(c, 2, y, B_VIB, Icons.VIBRATE, "Vibration", true)
-        drawSwitch(c, rightX - 11f * ui, y + rhh / 2f, swAnim[2])
-        y += step
-
-        settingRow(c, 3, y, B_FX, Icons.ZAP, "Effects Quality", true)
-        label(c, if (store.fxHigh) "HIGH" else "LOW", rightX - 5f * ui, y + rhh / 2f + 1.5f * ui, 4.2f * ui, withAlpha(cyan, 1f), align = Paint.Align.RIGHT, spacing = 0.1f)
+        settingRow(c, 2, y, B_VIB, Icons.VIBRATE, Fa.VIBRATION, true)
+        drawSwitch(c, switchX, y + rhh / 2f, swAnim[2])
         y += step
 
-        settingRow(c, 4, y, B_RESET, Icons.TRASH, "Reset Game Data", true)
-        label(c, "RESET", rightX - 5f * ui, y + rhh / 2f + 1.5f * ui, 4.2f * ui, withAlpha(magenta, 1f), align = Paint.Align.RIGHT, spacing = 0.1f)
+        settingRow(c, 3, y, B_FX, Icons.ZAP, Fa.FX, true)
+        rowValue(c, y, if (store.fxHigh) Fa.FX_HIGH else Fa.FX_LOW, withAlpha(cyan, 1f))
         y += step
 
-        settingRow(c, 5, y, 0, Icons.INFO, "Version", false)
-        label(c, "ZUP v$versionName", rightX - 5f * ui, y + rhh / 2f + 1.5f * ui, 4.2f * ui, withAlpha(white, 0.6f), align = Paint.Align.RIGHT)
+        settingRow(c, 4, y, B_RESET_SET, Icons.RESTART, Fa.RESET_SETTINGS, true)
+        rowValue(c, y, Fa.RESET_SETTINGS_BTN, withAlpha(cyan, 1f))
+        y += step
+
+        settingRow(c, 5, y, B_RESET, Icons.TRASH, Fa.ERASE_DATA, true)
+        rowValue(c, y, Fa.ERASE_BTN, withAlpha(magenta, 1f))
+        y += step
+
+        settingRow(c, 6, y, B_MYKET_COMMENT, Icons.STAR, Fa.MYKET_COMMENT, true)
         ga = 1f
 
         if (modal) {
@@ -1347,23 +1468,74 @@ class GameView(context: Context) : View(context) {
         c.scale(0.9f + 0.1f * k, 0.9f + 0.1f * k, w / 2f, h / 2f)
         drawCard(c, l, t, l + cw, t + chh, magenta, 0.7f)
         Icons.draw(c, Icons.TRASH, w / 2f, t + 9f * ui, 7f * ui, withAlpha(magenta, 1f))
-        label(c, "Erase all game data?", w / 2f, t + 21f * ui, 5f * ui, withAlpha(white, 1f), maxW = cw - 8f * ui)
-        label(c, "Coins, records, skins and settings will be lost.", w / 2f, t + 26.5f * ui, 3.2f * ui, withAlpha(white, 0.6f), bold = false, maxW = cw - 8f * ui)
-        label(c, "همه اطلاعات بازی پاک می‌شود. مطمئنی؟", w / 2f, t + 31f * ui, 3.2f * ui, withAlpha(softViolet, 0.8f), bold = false, maxW = cw - 8f * ui)
-        uiButton(c, B_CANCEL, l + 5f * ui, t + 38f * ui, l + cw / 2f - 1.5f * ui, t + 50f * ui, 1, "CANCEL", -1)
-        uiButton(c, B_ERASE, l + cw / 2f + 1.5f * ui, t + 38f * ui, l + cw - 5f * ui, t + 50f * ui, 2, "ERASE", -1)
+        label(c, Fa.CONFIRM_TITLE, w / 2f, t + 21f * ui, 5f * ui, withAlpha(white, 1f), maxW = cw - 8f * ui)
+        val body = wrapLines(Fa.CONFIRM_BODY, 3.4f * ui, cw - 10f * ui)
+        for ((i, ln) in body.withIndex()) {
+            label(c, ln, w / 2f, t + 27.5f * ui + i * 4.4f * ui, 3.4f * ui, withAlpha(white, 0.7f), bold = false, maxW = cw - 8f * ui)
+        }
+        // right-to-left: the safe action ("cancel") sits on the right
+        uiButton(c, B_CANCEL, l + cw / 2f + 1.5f * ui, t + 38f * ui, l + cw - 5f * ui, t + 50f * ui, 1, Fa.CANCEL, -1)
+        uiButton(c, B_ERASE, l + 5f * ui, t + 38f * ui, l + cw / 2f - 1.5f * ui, t + 50f * ui, 2, Fa.ERASE_NOW, -1)
         c.restore()
+        ga = 1f
+    }
+
+    private fun drawGuide(c: Canvas) {
+        drawHeader(c, Fa.GUIDE, w - 36f * ui)
+        val top = topY()
+        var y = top + 10f * ui + 5f * ui
+        val l = 5f * ui
+        val r = w - 5f * ui
+        val bodySize = 3.7f * ui
+        val textW = (r - l) - 10f * ui
+        for (i in Fa.guideTitles.indices) {
+            ga = stag(1 + i)
+            val lines = wrapLines(Fa.guideBodies[i], bodySize, textW)
+            val ch = 3f * ui + 5f * ui + lines.size * 4.8f * ui + 2f * ui
+            val yy = y + (1f - ga) * 4f * ui
+            drawCard(c, l, yy, r, yy + ch, violet, 0.3f)
+            label(c, Fa.guideTitles[i], r - 5f * ui, yy + 3f * ui + 3.6f * ui, 4.4f * ui, withAlpha(cyan, 1f), align = Paint.Align.RIGHT, maxW = textW)
+            for ((k, ln) in lines.withIndex()) {
+                label(c, ln, r - 5f * ui, yy + 3f * ui + 5f * ui + (k + 1) * 4.8f * ui - 1f * ui, bodySize, withAlpha(white, 0.85f), bold = false, align = Paint.Align.RIGHT)
+            }
+            y += ch + 2.5f * ui
+        }
+        ga = 1f
+    }
+
+    private fun drawRecords(c: Canvas) {
+        drawHeader(c, Fa.RECORDS, w - 36f * ui)
+        val top = topY()
+        var y = top + 10f * ui + 6f * ui
+        val step = 15f * ui
+        val items = arrayOf(
+            Triple(Icons.TROPHY, Fa.BEST_SCORE, "${store.best}"),
+            Triple(Icons.COIN, Fa.COINS, "${store.coins}"),
+            Triple(Icons.PLAY, Fa.GAMES_PLAYED, "${store.gamesPlayed}"),
+            Triple(Icons.ZAP, Fa.TOTAL_CRYSTALS, "${store.totalCrystals}"),
+            Triple(Icons.SHOP, Fa.SKINS_OWNED, "${store.ownedSkinCount()} از ${Cosmetics.SKIN_COUNT}"),
+            Triple(Icons.SHOP, Fa.TRAILS_OWNED, "${store.ownedTrailCount()} از ${Cosmetics.TRAIL_COUNT}")
+        )
+        for ((i, it) in items.withIndex()) {
+            settingRow(c, i, y, 0, it.first, it.second, false)
+            rowValue(c, y, it.third, withAlpha(if (i == 0) gold else white, 1f))
+            y += step
+        }
         ga = 1f
     }
 
     private fun drawToast(c: Canvas) {
         if (toastTime <= 0f) return
         val a = min(1f, toastTime / 0.3f)
-        val ts = 4.2f * ui
-        textPaint.textSize = ts
-        textPaint.typeface = boldFace
-        textPaint.letterSpacing = 0f
-        val tw = textPaint.measureText(toastText)
+        var ts = 4.2f * ui
+        var txt = prep(toastText, ts, true, 0f)
+        var tw = textPaint.measureText(txt)
+        val maxTw = w - 20f * ui
+        if (tw > maxTw) {
+            ts *= maxTw / tw
+            txt = prep(toastText, ts, true, 0f)
+            tw = textPaint.measureText(txt)
+        }
         val cy = h - 14f * ui
         rect.set(w / 2f - tw / 2f - 5f * ui, cy - 5f * ui, w / 2f + tw / 2f + 5f * ui, cy + 5f * ui)
         fill.color = withAlpha(0xFF0B0720.toInt(), 0.95f * a)

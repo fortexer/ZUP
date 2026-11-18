@@ -11,9 +11,9 @@ object Cosmetics {
     const val SKIN_COUNT = 8
     const val TRAIL_COUNT = 6
 
-    val skinNames = arrayOf("Neon Blue", "Purple Core", "Toxic Green", "Solar Gold", "Crimson", "Ice", "Galaxy", "Shadow")
+    val skinNames = Fa.skinNames
     val skinPrices = intArrayOf(0, 120, 160, 220, 280, 350, 500, 650)
-    val trailNames = arrayOf("Classic", "Blue Flame", "Purple Trail", "Electric", "Rainbow", "Plasma")
+    val trailNames = Fa.trailNames
     val trailPrices = intArrayOf(0, 150, 220, 320, 450, 600)
 
     private val skinCore = intArrayOf(

@@ -32,6 +32,10 @@ object Icons {
     const val CHECK = 17
     const val TRASH = 18
     const val ZAP = 19
+    const val STAR = 20
+    const val EXIT = 21
+    const val HELP = 22
+    const val APPS = 23
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -197,6 +201,25 @@ object Icons {
                 poly(c, false, 9f, 6f, 9f, 3f, 15f, 3f, 15f, 6f)
             }
             ZAP -> poly(c, true, 13f, 2f, 3f, 14f, 12f, 14f, 11f, 22f, 21f, 10f, 12f, 10f)
+            STAR -> poly(c, true, 12f, 2.5f, 14.9f, 8.8f, 21.7f, 9.5f, 16.6f, 14.1f, 18.1f, 20.8f,
+                12f, 17.4f, 5.9f, 20.8f, 7.4f, 14.1f, 2.3f, 9.5f, 9.1f, 8.8f)
+            EXIT -> {
+                poly(c, false, 10f, 4f, 4f, 4f, 4f, 20f, 10f, 20f)
+                line(c, 9f, 12f, 21f, 12f)
+                poly(c, false, 16f, 7f, 21f, 12f, 16f, 17f)
+            }
+            HELP -> {
+                circle(c, 12f, 12f, 9f)
+                arc(c, 8.8f, 7.5f, 15.2f, 13.5f, 180f, 230f)
+                line(c, 12f, 13.5f, 12f, 14.5f)
+                c.drawCircle(px(12f), py(17.4f), 1.1f * k, fillP)
+            }
+            APPS -> {
+                roundRect(c, 3f, 3f, 10.5f, 10.5f, 1.5f)
+                roundRect(c, 13.5f, 3f, 21f, 10.5f, 1.5f)
+                roundRect(c, 3f, 13.5f, 10.5f, 21f, 1.5f)
+                roundRect(c, 13.5f, 13.5f, 21f, 21f, 1.5f)
+            }
         }
     }
 }
