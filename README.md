@@ -18,3 +18,7 @@ No signing keys or secrets are stored in this repository.
 1. Full Persian UI (bundled DejaVu Sans for Persian; drop `Vazirmatn-Regular.ttf` / `Vazirmatn-Bold.ttf` into `app/src/main/assets/fonts/` to use Vazirmatn instead), Persian digits, RTL layout.
 2. New menu: guide, records, about, exit; settings with a real "restore settings" action.
 3. Official Myket intents (`Myket.kt`): rate/comment (in Settings) — with an installed-check and error messages.
+
+## v2.2 – Visual refresh + Lalezar font
+1. Game font is now **Lalezar**. Put `Lalezar-Regular.ttf` in `app/src/main/assets/fonts/` (the GitHub Actions build downloads it automatically if the file is missing). Falls back to DejaVu Sans if absent.
+2. New look: nebula glow background, twinkling parallax stars, glossy neon barriers, sheen/glow on cards and buttons, pulsing play button, redesigned Persian logo.

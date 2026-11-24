@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -175,6 +176,13 @@ class GameView(context: Context) : View(context) {
     private val rect = RectF()
     private val path = Path()
     private val bgPaint = Paint()
+    private val glowPaint = Paint()
+    private val glow2Paint = Paint()
+    private var starX = FloatArray(0)
+    private var starY = FloatArray(0)
+    private var starS = FloatArray(0)
+    private var starV = FloatArray(0)
+    private var starP = FloatArray(0)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -182,13 +190,17 @@ class GameView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val boldFace: Typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    private val normalFace: Typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-
-    // Persian faces: an optional Vazirmatn drop-in is preferred, otherwise the bundled DejaVu Sans
-    // (full Persian letters + joining); last resort is the system default.
-    private val faRegular: Typeface = loadFont(arrayOf("fonts/Vazirmatn-Regular.ttf", "fonts/DejaVuSans.ttf"), false)
-    private val faBold: Typeface = loadFont(arrayOf("fonts/Vazirmatn-Bold.ttf", "fonts/DejaVuSans-Bold.ttf"), true)
+    // Game font: Lalezar (single weight, Persian + Latin). If the file is missing from assets/fonts,
+    // everything falls back to the bundled DejaVu Sans / system default, so the game never crashes.
+    private val lalezar: Typeface? = try {
+        Typeface.createFromAsset(context.assets, "fonts/Lalezar-Regular.ttf")
+    } catch (e: Throwable) {
+        null
+    }
+    private val boldFace: Typeface = lalezar ?: Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    private val normalFace: Typeface = lalezar ?: Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+    private val faRegular: Typeface = lalezar ?: loadFont(arrayOf("fonts/DejaVuSans.ttf"), false)
+    private val faBold: Typeface = lalezar ?: loadFont(arrayOf("fonts/DejaVuSans-Bold.ttf"), true)
 
     private fun loadFont(candidates: Array<String>, bold: Boolean): Typeface {
         for (path in candidates) {
@@ -227,6 +239,20 @@ class GameView(context: Context) : View(context) {
         rowH = 6.5f * u
         crystalR = 2.8f * u
         bgPaint.shader = LinearGradient(0f, 0f, 0f, h, bgTop, bgBottom, Shader.TileMode.CLAMP)
+        glowPaint.shader = RadialGradient(
+            w / 2f, h * 0.16f, w * 1.05f,
+            intArrayOf(0x66B14DFF, 0x228A2BFF, 0x00000000), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+        )
+        glow2Paint.shader = RadialGradient(
+            w / 2f, h * 1.02f, w * 1.1f,
+            intArrayOf(0x4400F0FF, 0x1A00A0FF, 0x00000000), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+        )
+        val n = 54
+        starX = FloatArray(n) { Random.nextFloat() * w }
+        starY = FloatArray(n) { Random.nextFloat() * h }
+        starS = FloatArray(n) { (0.12f + Random.nextFloat() * 0.3f) * u }
+        starV = FloatArray(n) { 1.5f + Random.nextFloat() * 5f }
+        starP = FloatArray(n) { Random.nextFloat() * 6.2832f }
         resetWorld()
     }
 
@@ -872,11 +898,21 @@ class GameView(context: Context) : View(context) {
     private fun drawCard(c: Canvas, l: Float, t: Float, r: Float, b: Float, accent: Int, accentA: Float) {
         rect.set(l, t, r, b)
         val rad = 4f * ui
+        stroke.strokeWidth = 2.2f * ui
+        stroke.color = withAlpha(accent, accentA * 0.14f)
+        c.drawRoundRect(rect, rad, rad, stroke)
         fill.color = withAlpha(cardColor, 0.94f)
         c.drawRoundRect(rect, rad, rad, fill)
         stroke.strokeWidth = 0.5f * ui
         stroke.color = withAlpha(accent, accentA)
         c.drawRoundRect(rect, rad, rad, stroke)
+        // soft top sheen + bright accent edge
+        rect.set(l + 0.6f * ui, t + 0.6f * ui, r - 0.6f * ui, t + (b - t) * 0.32f)
+        fill.color = withAlpha(white, 0.035f)
+        c.drawRoundRect(rect, rad * 0.8f, rad * 0.8f, fill)
+        stroke.strokeWidth = 0.7f * ui
+        stroke.color = withAlpha(accent, min(1f, accentA * 1.6f))
+        c.drawLine(l + rad * 1.4f, t, r - rad * 1.4f, t, stroke)
     }
 
     /** style 0 = primary (cyan), 1 = secondary, 2 = danger. Persian text puts the icon on the right. */
@@ -900,7 +936,7 @@ class GameView(context: Context) : View(context) {
         }
         if (style != 1 && enabled) {
             stroke.strokeWidth = 2.4f * ui
-            stroke.color = withAlpha(base, 0.10f)
+            stroke.color = withAlpha(base, if (style == 0) 0.10f + 0.08f * (0.5f + 0.5f * sin(clock * 3f)) else 0.10f)
             c.drawRoundRect(rect, rad, rad, stroke)
         }
         fill.color = when (style) {
@@ -912,6 +948,10 @@ class GameView(context: Context) : View(context) {
         stroke.strokeWidth = 0.5f * ui
         stroke.color = withAlpha(base, (if (style == 1) 0.55f else 0.95f) * dim)
         c.drawRoundRect(rect, rad, rad, stroke)
+        val inset = (b - t) * 0.07f
+        rect.set(l + inset, t + inset, r - inset, t + (b - t) * 0.5f)
+        fill.color = withAlpha(white, (if (style == 1) 0.04f else 0.08f) * dim)
+        c.drawRoundRect(rect, rad * 0.75f, rad * 0.75f, fill)
 
         var ts = (b - t) * 0.36f
         var isz = (b - t) * 0.46f
@@ -1011,6 +1051,14 @@ class GameView(context: Context) : View(context) {
     }
 
     private fun drawGrid(c: Canvas) {
+        c.drawRect(0f, 0f, w, h, glowPaint)
+        c.drawRect(0f, 0f, w, h, glow2Paint)
+        for (i in starX.indices) {
+            val y = (starY[i] + clock * starV[i] * u) % h
+            val tw = 0.55f + 0.45f * sin(clock * 1.6f + starP[i])
+            fill.color = withAlpha(if (i % 5 == 0) cyan else if (i % 7 == 0) pink else white, 0.16f + 0.5f * tw * (starS[i] / (0.42f * u)))
+            c.drawCircle(starX[i], y, starS[i], fill)
+        }
         stroke.strokeWidth = 0.25f * u
         stroke.color = withAlpha(cyan, 0.07f)
         val step = 12f * u
@@ -1100,6 +1148,11 @@ class GameView(context: Context) : View(context) {
         stroke.strokeWidth = 0.55f * u
         stroke.color = withAlpha(color, 0.95f * a)
         c.drawRoundRect(rect, rad, rad, stroke)
+        if (r - l > rad * 2.4f) {
+            rect.set(l + rad * 0.9f, t + rowH * 0.14f, r - rad * 0.9f, t + rowH * 0.30f)
+            fill.color = withAlpha(white, 0.22f * a)
+            c.drawRoundRect(rect, rowH * 0.08f, rowH * 0.08f, fill)
+        }
     }
 
     private fun diamond(x: Float, y: Float, r: Float) {
@@ -1138,6 +1191,7 @@ class GameView(context: Context) : View(context) {
 
     private fun drawHud(c: Canvas) {
         val top = topY()
+        label(c, "$score", w / 2f, top + 17.6f * ui, 15.6f * ui, withAlpha(violet, 0.30f))
         label(c, "$score", w / 2f, top + 17f * ui, 15f * ui, withAlpha(white, 1f))
         label(c, "${Fa.BEST} ${max(store.best, score)}", w / 2f, top + 24f * ui, 3.8f * ui, withAlpha(white, 0.55f))
         drawCoinChip(c, w - 5f * ui, top, 8f * ui, runCoins, "+")
@@ -1171,11 +1225,12 @@ class GameView(context: Context) : View(context) {
         ga = stag(0)
         drawCoinChip(c, w - 5f * ui, top, 9f * ui, store.coins, "")
         val ty = h * 0.20f + sin(clock * 2f) * 1.0f * ui + (1f - ga) * 6f * ui
-        label(c, "ZUP", w / 2f, ty, 32f * ui, withAlpha(violet, 0.22f), spacing = 0.1f)
-        label(c, "ZUP", w / 2f - 0.8f * ui, ty, 30f * ui, withAlpha(cyan, 0.85f), spacing = 0.1f)
-        label(c, "ZUP", w / 2f + 0.8f * ui, ty, 30f * ui, withAlpha(magenta, 0.85f), spacing = 0.1f)
-        label(c, "ZUP", w / 2f, ty, 30f * ui, withAlpha(white, 1f), spacing = 0.1f)
-        label(c, "زوپ", w / 2f, ty + 13f * ui, 10f * ui, withAlpha(softViolet, 1f))
+        val hero = 30f * ui
+        label(c, "زوپ", w / 2f, ty + 1.2f * ui, hero * 1.04f, withAlpha(violet, 0.28f), maxW = 80f * ui)
+        label(c, "زوپ", w / 2f - 0.9f * ui, ty, hero, withAlpha(cyan, 0.85f), maxW = 80f * ui)
+        label(c, "زوپ", w / 2f + 0.9f * ui, ty, hero, withAlpha(magenta, 0.85f), maxW = 80f * ui)
+        label(c, "زوپ", w / 2f, ty, hero, withAlpha(white, 1f), maxW = 80f * ui)
+        label(c, "ZUP", w / 2f, ty + 12.5f * ui, 7f * ui, withAlpha(softViolet, 0.9f), spacing = 0.6f)
         stroke.strokeWidth = 0.6f * ui
         stroke.color = withAlpha(cyan, 0.7f)
         c.drawLine(w * 0.32f, ty + 19f * ui, w * 0.68f, ty + 19f * ui, stroke)
